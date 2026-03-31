@@ -284,6 +284,33 @@ def _pick_heartbeat_target(channels: ChannelManager, session_manager: SessionMan
     return "cli", "direct"
 
 
+def _mount_frontend(app: FastAPI) -> None:
+    """Serve the React frontend from roboclaw-web/dist/ if it exists."""
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse, HTMLResponse
+    from starlette.staticfiles import StaticFiles
+
+    # Look for dist/ relative to the roboclaw package
+    pkg_root = Path(__file__).resolve().parent.parent.parent
+    dist_dir = pkg_root / "roboclaw-web" / "dist"
+    if not dist_dir.is_dir():
+        return
+
+    app.mount("/assets", StaticFiles(directory=str(dist_dir / "assets")), name="static-assets")
+
+    index_html = (dist_dir / "index.html").read_text(encoding="utf-8")
+
+    @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
+    async def _spa_fallback(full_path: str) -> HTMLResponse | FileResponse:
+        # Serve actual files from dist/ first
+        candidate = dist_dir / full_path
+        if full_path and candidate.is_file() and ".." not in full_path:
+            return FileResponse(str(candidate))
+        # All other routes get index.html (SPA client-side routing)
+        return HTMLResponse(content=index_html)
+
+
 async def _cancel_background_tasks(app: FastAPI) -> None:
     """Cancel all background tasks created during startup."""
     for task_name in ("heartbeat_task", "cron_task", "channels_task", "agent_task"):
@@ -420,11 +447,14 @@ def create_app(
     dashboard_manager = DashboardManager()
     register_dashboard_routes(app, dashboard_manager)
 
+    # 13. Serve frontend static files (production build)
+    _mount_frontend(app)
+
     # Store state for host/port access
     app.state.web_host = web_cfg["host"]
     app.state.web_port = web_cfg["port"]
 
-    # 13. Startup: launch all background tasks
+    # 14. Startup: launch all background tasks
     @app.on_event("startup")
     async def _startup() -> None:
         app.state.agent_task = asyncio.create_task(agent.run(), name="roboclaw-agent")
