@@ -136,3 +136,19 @@ def apply_headless_patch() -> None:
 
     control_utils.init_keyboard_listener = init_keyboard_listener
     control_utils.is_headless = lambda: not sys.stdin.isatty()
+
+    # Auto-confirm calibration prompts when running under a PTY (Dashboard).
+    # LeRobot calls input("Press ENTER to use provided calibration file...")
+    # in so_follower/so_leader connect(). Patching input() to return ""
+    # (equivalent to pressing Enter) skips the interactive confirmation.
+    import builtins
+
+    _original_input = builtins.input
+
+    def _auto_confirm_input(prompt: str = "") -> str:
+        if sys.stdin.isatty():
+            return _original_input(prompt)
+        print(f"[headless] auto-confirm: {prompt.strip()[:80]}")
+        return ""
+
+    builtins.input = _auto_confirm_input
