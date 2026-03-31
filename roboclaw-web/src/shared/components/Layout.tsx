@@ -12,6 +12,7 @@ export default function Layout() {
   }, [connect, disconnect])
 
   const navItems = [
+    { path: '/dashboard', label: '数据采集' },
     { path: '/chat', label: '对话' },
     { path: '/settings', label: '设置' },
   ]

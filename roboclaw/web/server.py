@@ -30,6 +30,7 @@ from roboclaw.providers.factory import ProviderConfigurationError, UnconfiguredP
 from roboclaw.providers.registry import PROVIDERS
 from roboclaw.session.manager import SessionManager
 from roboclaw.utils.helpers import sync_workspace_templates
+from roboclaw.web.dashboard import DashboardManager, register_dashboard_routes
 
 
 # ------------------------------------------------------------------
@@ -416,6 +417,8 @@ def create_app(
     if web_ch is not None:
         web_ch.register_routes(app)
     _register_system_routes(app, agent)
+    dashboard_manager = DashboardManager()
+    register_dashboard_routes(app, dashboard_manager)
 
     # Store state for host/port access
     app.state.web_host = web_cfg["host"]
@@ -432,6 +435,7 @@ def create_app(
     # 14. Shutdown: tear down gracefully
     @app.on_event("shutdown")
     async def _shutdown() -> None:
+        await dashboard_manager.shutdown()
         agent.stop()
         await channel_manager.stop_all()
         heartbeat.stop()
