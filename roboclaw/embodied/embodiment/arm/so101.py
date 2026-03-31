@@ -267,7 +267,7 @@ class SO101Controller:
             f"--dataset.single_task={task}",
             f"--dataset.fps={fps}",
             f"--dataset.num_episodes={num_episodes}",
-            "--dataset.vcodec=auto",
+            "--dataset.vcodec=libx264",
             "--dataset.streaming_encoding=true",
         ]
         if episode_time_s is not None:
