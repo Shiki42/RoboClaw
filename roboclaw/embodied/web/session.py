@@ -133,10 +133,47 @@ class RobotSession:
     def stop_recording(self) -> None:
         with self._lock:
             self._require_state("recording")
-            self._kill_subprocess()
+            self._graceful_stop_recording()
             self._state = "connected"
             self._episode_phase = ""
             logger.info("Recording stopped")
+
+    def _graceful_stop_recording(self) -> None:
+        """Send ESC for graceful stop (saves pending episode), fall back to SIGINT."""
+        import time
+
+        # Send ESC key — LeRobot sets stop_recording=True, exit_early=True,
+        # which lets save_episode() run before exiting.
+        if self._process_stdin is not None:
+            try:
+                self._process_stdin.write(b"\x1b\n")
+                self._process_stdin.flush()
+            except OSError:
+                pass
+
+        pid = self._process_pid
+        if pid is not None:
+            for _ in range(150):  # 15s max wait
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.1)
+            else:
+                logger.warning("Subprocess did not exit in 15s, sending SIGINT")
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGINT)
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+        if self._process_stdin is not None:
+            try:
+                self._process_stdin.close()
+            except OSError:
+                pass
+            self._process_stdin = None
+        self._process_pid = None
+        self._cleanup_temp_dirs()
 
     def get_status(self) -> dict[str, Any]:
         return {
