@@ -169,9 +169,9 @@ export const useDataCollection = create<DataCollectionStore>((set, get) => ({
 
   doSaveEpisode: async () => {
     get().addLog('Saving episode...')
+    set({ episodePhase: 'saving' })
     try {
       await postJson(`${API}/record/save-episode`)
-      get().addLog('Save signal sent', 'ok')
     } catch (e: unknown) {
       get().addLog(`Save episode failed: ${(e as Error).message}`, 'err')
     }
@@ -240,11 +240,20 @@ export const useDataCollection = create<DataCollectionStore>((set, get) => ({
           recording: 'recording',
         }
         const newState = stateMap[data.state] || 'disconnected'
+        const newPhase: EpisodePhase = data.episode_phase || ''
+        const prevPhase = get().episodePhase
+        const prevSaved = get().savedEpisodes
+        const newSaved = data.saved_episodes ?? 0
+
+        // Detect save completion: saved count increased
+        if (newSaved > prevSaved && prevPhase !== '') {
+          get().addLog(`Episode ${newSaved} saved — recording next`, 'ok')
+        }
 
         set({
           state: newState,
-          episodePhase: data.episode_phase || '',
-          savedEpisodes: data.saved_episodes ?? 0,
+          episodePhase: newPhase,
+          savedEpisodes: newSaved,
           targetEpisodes: data.target_episodes ?? 0,
         })
       } catch {
