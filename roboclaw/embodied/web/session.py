@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -22,6 +23,8 @@ from roboclaw.embodied.ops.helpers import (
 from roboclaw.embodied.sensor.camera import resolve_cameras
 from roboclaw.embodied.setup import load_setup
 
+_RE_RECORDING_EP = re.compile(r"\[lerobot\] Recording episode (\d+)")
+
 
 class RobotSession:
     """Manages robot lifecycle via subprocess delegation to LeRobot CLI."""
@@ -38,6 +41,10 @@ class RobotSession:
         self._process_stdin: Any = None
         self._recording_dataset: str = ""
         self._temp_dirs: list[str] = []
+        # Episode tracking — set by stdout reader thread, read by get_status()
+        self._episode_phase: str = ""  # "recording" | "saving" | "resetting" | ""
+        self._saved_episodes: int = 0
+        self._target_episodes: int = 0
 
     @property
     def state(self) -> str:
@@ -112,6 +119,9 @@ class RobotSession:
                 self._kill_subprocess()
 
             self._recording_dataset = dataset_name
+            self._saved_episodes = 0
+            self._target_episodes = num_episodes
+            self._episode_phase = ""
             self._state = "preparing"
         import time; time.sleep(5)
         with self._lock:
@@ -125,19 +135,90 @@ class RobotSession:
             self._require_state("recording")
             self._kill_subprocess()
             self._state = "connected"
+            self._episode_phase = ""
             logger.info("Recording stopped")
 
     def get_status(self) -> dict[str, Any]:
         return {
             "state": self._state,
-            "episode_count": 0,
-            "frame_count": 0,
-            "target_episodes": 0,
-            "recording_fps": 30,
-            "teleop_fps": 30,
-            "task": "",
+            "episode_phase": self._episode_phase,
+            "saved_episodes": self._saved_episodes,
+            "target_episodes": self._target_episodes,
             "dataset": self._recording_dataset if self._state == "recording" else None,
         }
+
+    # -- Episode control --------------------------------------------------
+
+    def save_episode(self) -> None:
+        """Send right arrow to subprocess — save current episode."""
+        self._send_key(b"\x1b[C")
+        logger.info("Sent save-episode signal (right arrow)")
+
+    def discard_episode(self) -> None:
+        """Send left arrow to subprocess — discard and rerecord."""
+        self._send_key(b"\x1b[D")
+        logger.info("Sent discard-episode signal (left arrow)")
+
+    def skip_reset(self) -> None:
+        """Send right arrow during reset wait to skip it."""
+        self._send_key(b"\x1b[C")
+        logger.info("Sent skip-reset signal (right arrow)")
+
+    def _send_key(self, key: bytes) -> None:
+        if self._process_stdin is None:
+            raise RuntimeError("No subprocess stdin available")
+        self._process_stdin.write(key)
+        self._process_stdin.flush()
+
+    # -- Subprocess stdout parsing ----------------------------------------
+
+    def _parse_subprocess_line(self, line: str) -> None:
+        """Parse LeRobot subprocess output to track episode lifecycle.
+
+        Stdout patterns (from headless_patch + control_utils):
+          [lerobot] Recording episode N   — new episode recording started
+          Right arrow key pressed...      — save triggered (or reset skipped)
+          [lerobot] Reset the environment — entered reset wait
+          [lerobot] Re-record episode     — discard confirmed
+          [lerobot] Stop recording        — recording ended
+        """
+        if _RE_RECORDING_EP.search(line):
+            # Next episode started → previous save completed
+            if self._episode_phase in ("saving", "resetting"):
+                self._saved_episodes += 1
+            self._episode_phase = "recording"
+            return
+
+        if "Right arrow key pressed" in line:
+            if self._episode_phase == "recording":
+                self._episode_phase = "saving"
+            elif self._episode_phase == "resetting":
+                self._episode_phase = "saving"
+            return
+
+        if "Reset the environment" in line:
+            self._episode_phase = "resetting"
+            return
+
+        if "Re-record episode" in line:
+            self._episode_phase = "recording"
+            return
+
+        if "Stop recording" in line:
+            # Final episode save completed if we were in saving/resetting
+            if self._episode_phase in ("saving", "resetting"):
+                self._saved_episodes += 1
+            self._episode_phase = ""
+
+    def _read_stdout(self, proc: subprocess.Popen) -> None:
+        """Reader thread: logs each subprocess line and parses episode state."""
+        for raw in iter(proc.stdout.readline, b""):
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if not line:
+                continue
+            logger.info("subprocess: {}", line)
+            self._parse_subprocess_line(line)
+        proc.stdout.close()
 
     # -- Command building (reuses SO101Controller) ---------------------
 
@@ -240,26 +321,11 @@ class RobotSession:
 
     # -- Subprocess management -----------------------------------------
 
-    def save_episode(self) -> None:
-        """Send 'right arrow' to subprocess → save current episode, start next."""
-        self._send_key(b"\x1b[C")
-        logger.info("Sent save-episode signal (right arrow)")
-
-    def discard_episode(self) -> None:
-        """Send 'left arrow' to subprocess → discard and rerecord current episode."""
-        self._send_key(b"\x1b[D")
-        logger.info("Sent discard-episode signal (left arrow)")
-
-    def _send_key(self, key: bytes) -> None:
-        if self._process_stdin is None:
-            raise RuntimeError("No subprocess stdin available")
-        self._process_stdin.write(key)
-        self._process_stdin.flush()
-
     def _launch_subprocess(self, argv: list[str]) -> None:
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
@@ -269,6 +335,7 @@ class RobotSession:
             proc.stdin.flush()
         self._process_stdin = proc.stdin
         self._process_pid = proc.pid
+        threading.Thread(target=self._read_stdout, args=(proc,), daemon=True).start()
         logger.info("Launched subprocess pid={}: {}", proc.pid, " ".join(argv[:5]))
 
     def _kill_subprocess(self) -> None:

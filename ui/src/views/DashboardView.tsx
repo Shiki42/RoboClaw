@@ -236,7 +236,7 @@ function canDo(state: RobotState) {
 // ── Main View ─────────────────────────────────────────────────
 export default function DashboardView() {
   const store = useDataCollection()
-  const { state, stats, logs, datasets, loading, currentEpisode, totalEpisodes } = store
+  const { state, logs, datasets, loading, episodePhase, savedEpisodes, targetEpisodes } = store
   const { hardwareStatus: hwStatus, fetchHardwareStatus } = useDashboard()
   const ok = canDo(state)
   const logRef = useRef<HTMLDivElement>(null)
@@ -307,10 +307,9 @@ export default function DashboardView() {
         <span className={`px-2 py-0.5 rounded-sm text-xs font-semibold ${stateBadgeCls[state]}`}>
           {stateLabel[state]}
         </span>
-        <span className="text-tx2">Arms: {stats.arms}</span>
-        <span className="text-tx2">FPS: {stats.fps}</span>
-        <span className="text-tx2">Frames: {stats.frames}</span>
-        <span className="text-tx2">Episodes: {stats.episodes}</span>
+        {state === 'recording' && (
+          <span className="text-tx2">{t('savedEpisodes')}: {savedEpisodes} / {targetEpisodes}</span>
+        )}
       </div>
 
       {/* Main layout */}
@@ -466,28 +465,55 @@ export default function DashboardView() {
                   {/* Progress bar */}
                   <div className="mb-3">
                     <div className="flex justify-between text-sm text-tx mb-1">
-                      <span>Episode {currentEpisode} / {totalEpisodes}</span>
-                      <span>{totalEpisodes > 0 ? Math.round(((currentEpisode - 1) / totalEpisodes) * 100) : 0}%</span>
+                      <span>{t('savedEpisodes')}: {savedEpisodes} / {targetEpisodes}</span>
+                      <span>{targetEpisodes > 0 ? Math.round((savedEpisodes / targetEpisodes) * 100) : 0}%</span>
                     </div>
                     <div className="w-full h-2.5 bg-bd rounded-full overflow-hidden">
                       <div
                         className="h-full bg-ac rounded-full transition-all duration-500"
-                        style={{ width: `${totalEpisodes > 0 ? ((currentEpisode - 1) / totalEpisodes) * 100 : 0}%` }}
+                        style={{ width: `${targetEpisodes > 0 ? (savedEpisodes / targetEpisodes) * 100 : 0}%` }}
                       />
                     </div>
                   </div>
 
                   <div className="flex gap-2 flex-wrap mb-3">
-                    <Btn variant="gn" onClick={store.doSaveEpisode}>
-                      {t('saveEpisode')}
+                    <Btn variant="gn" disabled={episodePhase !== 'recording'} onClick={store.doSaveEpisode}>
+                      {episodePhase === 'saving' ? t('episodeSaving') : t('saveEpisode')}
                     </Btn>
-                    <Btn variant="yl" onClick={store.doDiscardEpisode}>
+                    <Btn variant="yl" disabled={episodePhase !== 'recording'} onClick={store.doDiscardEpisode}>
                       {t('discardEpisode')}
                     </Btn>
+                    {episodePhase === 'resetting' && (
+                      <Btn variant="ac" onClick={store.doSkipReset}>
+                        {t('skipReset')}
+                      </Btn>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-ac">
-                    <span className="w-2 h-2 rounded-full bg-ac animate-pulse" />
-                    {t('stateRecording')}
+                  <div className="flex items-center gap-2 text-sm">
+                    {episodePhase === 'recording' && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-ac animate-pulse" />
+                        <span className="text-ac">{t('stateRecording')}</span>
+                      </>
+                    )}
+                    {episodePhase === 'saving' && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-yl animate-pulse" />
+                        <span className="text-yl">{t('episodeSaving')}</span>
+                      </>
+                    )}
+                    {episodePhase === 'resetting' && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-yl animate-pulse" />
+                        <span className="text-yl">{t('episodeResetting')}</span>
+                      </>
+                    )}
+                    {!episodePhase && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-ac animate-pulse" />
+                        <span className="text-ac">{t('stateRecording')}</span>
+                      </>
+                    )}
                   </div>
                 </>
               )}

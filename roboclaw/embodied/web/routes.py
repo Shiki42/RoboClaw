@@ -125,6 +125,13 @@ async def record_discard_episode() -> dict[str, str]:
     return {"status": "episode_discarded"}
 
 
+@router.post("/record/skip-reset")
+async def record_skip_reset() -> dict[str, str]:
+    """Skip the reset wait period between episodes."""
+    _session().skip_reset()
+    return {"status": "reset_skipped"}
+
+
 # ---------------------------------------------------------------------------
 # Datasets
 # ---------------------------------------------------------------------------

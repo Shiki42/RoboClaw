@@ -54,7 +54,7 @@ function canDo(state: RobotState) {
 // ── Main View ─────────────────────────────────────────────────
 export default function DataCollectionView() {
   const store = useDataCollection()
-  const { state, stats, episodeNum, logs, datasets } = store
+  const { state, logs, datasets, savedEpisodes, targetEpisodes, episodePhase } = store
   const ok = canDo(state)
   const logRef = useRef<HTMLDivElement>(null)
   const { t } = useI18n()
@@ -107,10 +107,9 @@ export default function DataCollectionView() {
         <span className={`px-2 py-0.5 rounded-sm text-xs font-semibold ${stateBadgeCls[state]}`}>
           {stateLabel[state]}
         </span>
-        <span className="text-tx2">Arms: {stats.arms}</span>
-        <span className="text-tx2">FPS: {stats.fps}</span>
-        <span className="text-tx2">Frames: {stats.frames}</span>
-        <span className="text-tx2">Episodes: {stats.episodes}</span>
+        {state === 'recording' && (
+          <span className="text-tx2">{t('savedEpisodes')}: {savedEpisodes} / {targetEpisodes}</span>
+        )}
       </div>
 
       {/* Main layout */}
@@ -210,11 +209,17 @@ export default function DataCollectionView() {
               {state === 'recording' && (
                 <div className="text-center py-4 bg-bg rounded-lg border border-bd">
                   <div className="text-4xl font-bold text-ac leading-tight max-[500px]:text-3xl">
-                    {episodeNum}
+                    {savedEpisodes} / {targetEpisodes}
                   </div>
                   <div className="text-xs text-tx2 uppercase tracking-widest mt-1">
-                    {t('episodesRecorded')}
+                    {t('savedEpisodes')}
                   </div>
+                  {episodePhase === 'saving' && (
+                    <div className="text-sm text-yl mt-2">{t('episodeSaving')}</div>
+                  )}
+                  {episodePhase === 'resetting' && (
+                    <div className="text-sm text-yl mt-2">{t('episodeResetting')}</div>
+                  )}
                 </div>
               )}
             </div>

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 export type RobotState = 'disconnected' | 'connected' | 'preparing' | 'teleoperating' | 'recording'
+export type EpisodePhase = '' | 'recording' | 'saving' | 'resetting'
 
 interface LogEntry {
   time: string
@@ -15,22 +16,14 @@ interface Dataset {
   fps?: number
 }
 
-interface HeaderStats {
-  arms: string
-  fps: string
-  frames: number
-  episodes: number
-}
-
 interface DataCollectionStore {
   state: RobotState
   loading: string | null
   datasets: Dataset[]
   logs: LogEntry[]
-  stats: HeaderStats
-  episodeNum: string
-  currentEpisode: number
-  totalEpisodes: number
+  episodePhase: EpisodePhase
+  savedEpisodes: number
+  targetEpisodes: number
   cameraFeeds: Record<string, string>
 
   // Actions
@@ -47,6 +40,7 @@ interface DataCollectionStore {
   doRecordStop: () => Promise<void>
   doSaveEpisode: () => Promise<void>
   doDiscardEpisode: () => Promise<void>
+  doSkipReset: () => Promise<void>
   loadDatasets: () => Promise<void>
   deleteDataset: (name: string) => Promise<void>
   addLog: (message: string, cls?: 'info' | 'ok' | 'err') => void
@@ -87,10 +81,9 @@ export const useDataCollection = create<DataCollectionStore>((set, get) => ({
   loading: null,
   datasets: [],
   logs: [],
-  stats: { arms: '--', fps: '--', frames: 0, episodes: 0 },
-  episodeNum: '0 / 0',
-  currentEpisode: 0,
-  totalEpisodes: 0,
+  episodePhase: '',
+  savedEpisodes: 0,
+  targetEpisodes: 0,
   cameraFeeds: {},
 
   addLog: (message, cls = 'info') => {
@@ -149,14 +142,13 @@ export const useDataCollection = create<DataCollectionStore>((set, get) => ({
   },
 
   doRecordStart: async (params) => {
-    set({ loading: 'record', currentEpisode: 0, totalEpisodes: params.num_episodes })
+    set({ loading: 'record', savedEpisodes: 0, targetEpisodes: params.num_episodes })
     get().addLog(
       `Starting recording: ${params.dataset_name} (${params.num_episodes} episodes @ ${params.fps} fps)`,
     )
     try {
       await postJson(`${API}/record/start`, params)
-      set({ currentEpisode: 1 })
-      get().addLog('Recording started — episode 1', 'ok')
+      get().addLog('Recording started', 'ok')
     } catch (e: unknown) {
       get().addLog(`Record start failed: ${(e as Error).message}`, 'err')
     } finally {
@@ -176,13 +168,10 @@ export const useDataCollection = create<DataCollectionStore>((set, get) => ({
   },
 
   doSaveEpisode: async () => {
-    const ep = get().currentEpisode
-    get().addLog(`Saving episode ${ep}...`)
+    get().addLog('Saving episode...')
     try {
       await postJson(`${API}/record/save-episode`)
-      const next = ep + 1
-      set({ currentEpisode: next })
-      get().addLog(`Episode ${ep} saved, starting episode ${next}`, 'ok')
+      get().addLog('Save signal sent', 'ok')
     } catch (e: unknown) {
       get().addLog(`Save episode failed: ${(e as Error).message}`, 'err')
     }
@@ -192,9 +181,19 @@ export const useDataCollection = create<DataCollectionStore>((set, get) => ({
     get().addLog('Discarding episode...')
     try {
       await postJson(`${API}/record/discard-episode`)
-      get().addLog('Episode discarded, rerecording', 'info')
+      get().addLog('Discard signal sent', 'info')
     } catch (e: unknown) {
       get().addLog(`Discard episode failed: ${(e as Error).message}`, 'err')
+    }
+  },
+
+  doSkipReset: async () => {
+    get().addLog('Skipping reset wait...')
+    try {
+      await postJson(`${API}/record/skip-reset`)
+      get().addLog('Skip signal sent', 'ok')
+    } catch (e: unknown) {
+      get().addLog(`Skip reset failed: ${(e as Error).message}`, 'err')
     }
   },
 
@@ -244,16 +243,9 @@ export const useDataCollection = create<DataCollectionStore>((set, get) => ({
 
         set({
           state: newState,
-          stats: {
-            arms: Array.isArray(data.arms) && data.arms.length ? data.arms.join(', ') : '--',
-            fps: data.fps != null ? Number(data.fps).toFixed(1) : '--',
-            frames: data.frame_count || 0,
-            episodes: data.episode_count ?? 0,
-          },
-          episodeNum:
-            data.episode_count != null
-              ? `${data.episode_count} / ${data.target_episodes || '?'}`
-              : '0 / 0',
+          episodePhase: data.episode_phase || '',
+          savedEpisodes: data.saved_episodes ?? 0,
+          targetEpisodes: data.target_episodes ?? 0,
         })
       } catch {
         /* ignore parse errors */
