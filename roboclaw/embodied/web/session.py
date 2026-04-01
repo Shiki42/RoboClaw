@@ -260,7 +260,7 @@ class RobotSession:
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             start_new_session=True,
         )
         # Auto-confirm calibration prompts (Press ENTER...)
